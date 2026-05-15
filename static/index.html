@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Request intake</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Request intake</h1>
+      <p class="lede">Paste an email or ticket. We classify it, pull out fields, check what is missing, and suggest who should pick it up next.</p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel input-panel">
+      <label for="req">Incoming request</label>
+      <textarea id="req" rows="14" placeholder="Subject and body go here…"></textarea>
+      <div class="row">
+        <button type="button" id="go">Run workflow</button>
+        <span id="status" class="status" aria-live="polite"></span>
+      </div>
+      <p class="hint">Uses your local Ollama model. First run can be slow while the model loads.</p>
+    </section>
+
+    <section class="panel out" id="out" hidden>
+      <h2>Outcome</h2>
+      <div class="grid">
+        <article>
+          <h3>Request type</h3>
+          <p id="rtype" class="mono"></p>
+          <p id="rsum" class="muted"></p>
+        </article>
+        <article>
+          <h3>Risk / priority</h3>
+          <p id="risk"></p>
+        </article>
+        <article class="wide">
+          <h3>Extracted information</h3>
+          <pre id="ext" class="mono block"></pre>
+        </article>
+        <article class="wide">
+          <h3>Validation</h3>
+          <p id="val"></p>
+        </article>
+        <article class="wide">
+          <h3>Recommended next action</h3>
+          <p id="rec"></p>
+          <p id="owner" class="muted"></p>
+        </article>
+        <article class="wide">
+          <h3>Workflow trace</h3>
+          <ol id="trace" class="trace"></ol>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+
+    function setBusy(b) {
+      $("go").disabled = b;
+      statusEl.textContent = b ? "Working…" : "";
+    }
+
+    $("go").addEventListener("click", async () => {
+      const text = $("req").value.trim();
+      if (text.length < 5) {
+        statusEl.textContent = "Please enter a bit more text.";
+        return;
+      }
+      $("out").hidden = true;
+      setBusy(true);
+      try {
+        const res = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || res.statusText || "Request failed");
+        }
+        $("out").hidden = false;
+        $("rtype").textContent = data.request_type || "—";
+        $("rsum").textContent = data.type_summary || "";
+        const r = data.risk || {};
+        $("risk").textContent = (r.risk_level || "—") + " · " + (r.priority || "—");
+        $("ext").textContent = JSON.stringify(data.extracted || {}, null, 2);
+        const v = data.validation || {};
+        const miss = (v.missing_fields || []).join(", ") || "none";
+        $("val").textContent =
+          (v.complete ? "Looks complete for routing." : "Incomplete: ") +
+          " Missing: " + miss +
+          (v.warnings && v.warnings.length ? " · " + v.warnings.join(" ") : "");
+        const rec = data.recommendation || {};
+        $("rec").textContent = rec.recommended_action || "—";
+        $("owner").textContent = rec.suggested_owner ? "Suggested owner: " + rec.suggested_owner : "";
+        const tr = $("trace");
+        tr.innerHTML = "";
+        (data.trace || []).forEach((t) => {
+          const li = document.createElement("li");
+          li.innerHTML = "<span class=\"step\">" + t.step + "</span> " + (t.detail || "");
+          tr.appendChild(li);
+        });
+      } catch (e) {
+        statusEl.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    });
+  </script>
+</body>
+</html>
