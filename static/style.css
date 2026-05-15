@@ -190,6 +190,45 @@ ol.trace .step {
   color: var(--accent);
 }
 
+ol.trace .stat {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.summary {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.flags .flaglist {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.flaglist li.on {
+  color: var(--accent);
+}
+
+.small {
+  font-size: 0.88rem;
+}
+
+.smallpre {
+  max-height: 12rem;
+  font-size: 0.82rem;
+}
+
+.valbanner {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+  min-height: 0;
+}
+
+.valbanner.warn {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 @media (min-width: 640px) {
   .grid {
     grid-template-columns: 1fr 1fr;

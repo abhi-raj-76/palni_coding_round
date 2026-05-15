@@ -10,7 +10,7 @@
   <header class="top">
     <div>
       <h1>Request intake</h1>
-      <p class="lede">Paste an email or ticket. We classify it, pull out fields, check what is missing, and suggest who should pick it up next.</p>
+      <p class="lede">Structured intake: classification, extraction, validation, risk, and routing — with guardrails for edge cases and abuse.</p>
     </div>
   </header>
 
@@ -22,20 +22,33 @@
         <button type="button" id="go">Run workflow</button>
         <span id="status" class="status" aria-live="polite"></span>
       </div>
-      <p class="hint">Uses your local Ollama model. First run can be slow while the model loads.</p>
+      <p class="hint">Local Ollama performs classification and extraction in one JSON pass; other signals are rule-based.</p>
     </section>
 
     <section class="panel out" id="out" hidden>
       <h2>Outcome</h2>
       <div class="grid">
         <article>
-          <h3>Request type</h3>
+          <h3>Type & confidence</h3>
           <p id="rtype" class="mono"></p>
-          <p id="rsum" class="muted"></p>
+          <p id="conf" class="muted"></p>
         </article>
         <article>
-          <h3>Risk / priority</h3>
-          <p id="risk"></p>
+          <h3>Sentiment</h3>
+          <p id="sent"></p>
+        </article>
+        <article>
+          <h3>Priority & risk</h3>
+          <p id="pri"></p>
+          <p id="risk" class="muted small"></p>
+        </article>
+        <article class="wide">
+          <h3>Summary</h3>
+          <p id="sum" class="summary"></p>
+        </article>
+        <article class="wide flags">
+          <h3>Flags</h3>
+          <ul id="flags" class="flaglist"></ul>
         </article>
         <article class="wide">
           <h3>Extracted information</h3>
@@ -43,12 +56,17 @@
         </article>
         <article class="wide">
           <h3>Validation</h3>
-          <p id="val"></p>
+          <p id="valbanner" class="valbanner" aria-live="polite"></p>
+          <p id="valstat"></p>
+          <pre id="valdetail" class="mono block smallpre"></pre>
         </article>
         <article class="wide">
-          <h3>Recommended next action</h3>
+          <h3>Recommended action</h3>
           <p id="rec"></p>
-          <p id="owner" class="muted"></p>
+        </article>
+        <article class="wide">
+          <h3>Escalation</h3>
+          <p id="esc"></p>
         </article>
         <article class="wide">
           <h3>Workflow trace</h3>
@@ -83,28 +101,75 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(data.detail || res.statusText || "Request failed");
+          throw new Error(
+            typeof data.detail === "string"
+              ? data.detail
+              : JSON.stringify(data.detail || data) || res.statusText
+          );
         }
         $("out").hidden = false;
         $("rtype").textContent = data.request_type || "—";
-        $("rsum").textContent = data.type_summary || "";
-        const r = data.risk || {};
-        $("risk").textContent = (r.risk_level || "—") + " · " + (r.priority || "—");
-        $("ext").textContent = JSON.stringify(data.extracted || {}, null, 2);
+        $("conf").textContent =
+          "Model confidence: " + (data.confidence_score != null ? data.confidence_score + "%" : "—");
+        $("sent").textContent = data.sentiment || "—";
+        $("pri").textContent = (data.priority || "—") + " · " + (data.risk_level || "—");
+        $("risk").textContent = data.risk_reason || "";
+        $("sum").textContent = data.summary || "—";
+
+        const fl = $("flags");
+        fl.innerHTML = "";
+        const addFlag = (label, on) => {
+          const li = document.createElement("li");
+          li.textContent = label + ": " + (on ? "yes" : "no");
+          li.className = on ? "on" : "off";
+          fl.appendChild(li);
+        };
+        addFlag("Human review required", !!data.human_review_required);
+        addFlag("Contradiction detected", !!data.contradiction_detected);
+        addFlag("Suspicious / abuse signals", !!data.suspicious_request);
+        const vis = (data.validation && data.validation.validation_issues) || [];
+        addFlag("Validation / data-quality issue(s)", vis.length > 0);
+
+        $("ext").textContent = JSON.stringify(data.extracted_information || {}, null, 2);
         const v = data.validation || {};
-        const miss = (v.missing_fields || []).join(", ") || "none";
-        $("val").textContent =
-          (v.complete ? "Looks complete for routing." : "Incomplete: ") +
-          " Missing: " + miss +
-          (v.warnings && v.warnings.length ? " · " + v.warnings.join(" ") : "");
-        const rec = data.recommendation || {};
-        $("rec").textContent = rec.recommended_action || "—";
-        $("owner").textContent = rec.suggested_owner ? "Suggested owner: " + rec.suggested_owner : "";
+        const issues = v.validation_issues || [];
+        const vb = $("valbanner");
+        if (issues.length) {
+          vb.textContent =
+            "Attention: " +
+            issues.map((x) => String(x).replace(/_/g, " ")).join("; ") +
+            ".";
+          vb.className = "valbanner warn";
+        } else {
+          vb.textContent = "";
+          vb.className = "valbanner";
+        }
+        $("valstat").textContent = "Status: " + (v.status || "—");
+        $("valdetail").textContent = JSON.stringify(
+          {
+            missing_fields: v.missing_fields || [],
+            validation_issues: v.validation_issues || [],
+            suggested_information_to_collect: v.suggested_information_to_collect || [],
+          },
+          null,
+          2
+        );
+        $("rec").textContent = data.recommended_action || "—";
+        const e = data.escalation_recommendation || {};
+        $("esc").textContent =
+          (e.required ? "Escalation suggested. " : "No mandatory escalation. ") +
+          (e.department ? "Department: " + e.department : "");
+
         const tr = $("trace");
         tr.innerHTML = "";
-        (data.trace || []).forEach((t) => {
+        (data.workflow_trace || []).forEach((t) => {
           const li = document.createElement("li");
-          li.innerHTML = "<span class=\"step\">" + t.step + "</span> " + (t.detail || "");
+          li.innerHTML =
+            '<span class="step">' +
+            (t.step || "") +
+            '</span> <span class="stat">' +
+            (t.status || "") +
+            "</span>";
           tr.appendChild(li);
         });
       } catch (e) {
